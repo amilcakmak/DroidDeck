@@ -2025,6 +2025,7 @@
     <string name="look_anime_edge_desc">Contornos toon más nitidez.</string>
 
     <string name="gpuinfo_not_adreno">La GPU no es Adreno</string>
+    <string name="gpuinfo_mali_experimental">Compatibilidad experimental con Mali/Immortalis (CSF): importa PanVK-kbase; solo se ha validado Mali-G615</string>
     <string name="gpuinfo_supported">Compatible</string>
     <string name="gpuinfo_experimental">Experimental: sus controladores son versiones de prueba</string>
     <string name="gpuinfo_a850_experimental">Compatibilidad experimental con Adreno 850: requiere controladores experimentales de pantalla y de juegos compatibles; no verificada en este dispositivo</string>

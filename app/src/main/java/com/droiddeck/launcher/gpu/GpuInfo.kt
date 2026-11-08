@@ -24,6 +24,7 @@ data class GpuInfo(
         A7XX("Adreno 7xx"),
         A6XX("Adreno 6xx"),
         ADRENO_UNKNOWN("Adreno"),
+        MALI("Arm Mali"),
         NOT_ADRENO("Not an Adreno GPU");
 
         fun label(context: Context): String = if (this == NOT_ADRENO) context.getString(R.string.gpuinfo_not_adreno) else label
@@ -35,6 +36,7 @@ data class GpuInfo(
 
     val support: Support
         get() = when {
+            family == Family.MALI -> maliSupport(Build.VERSION.SDK_INT)
             family == Family.NOT_ADRENO -> Support.UNSUPPORTED
             isA850 -> Support.UNTESTED
             verifiedDevice -> Support.TESTED
@@ -47,15 +49,19 @@ data class GpuInfo(
     val supportText: String
         get() = when (support) {
             Support.TESTED -> "Supported"
-            Support.UNTESTED -> if (isA850) "Experimental Adreno 850 support: requires compatible experimental display and game drivers; not verified on this device"
-                else if (family == Family.A7XX_LOW) "Experimental: its drivers are test builds"
-                else "Outside tested hardware (Adreno 650, 725 and newer): it may not run"
+            Support.UNTESTED -> when {
+                family == Family.MALI -> "Experimental Mali/Immortalis (CSF): import PanVK-kbase; validated on Mali-G615, this GPU is untested"
+                isA850 -> "Experimental Adreno 850 support: requires compatible experimental display and game drivers; not verified on this device"
+                family == Family.A7XX_LOW -> "Experimental: its drivers are test builds"
+                else -> "Outside tested hardware (Adreno 650, 725 and newer): it may not run"
+            }
             Support.UNSUPPORTED -> "Not supported: DroidDeck needs an Adreno (Snapdragon) GPU"
         }
 
     fun supportText(context: Context): String = context.getString(when (support) {
         Support.TESTED -> R.string.gpuinfo_supported
         Support.UNTESTED -> when {
+            family == Family.MALI -> R.string.gpuinfo_mali_experimental
             isA850 -> R.string.gpuinfo_a850_experimental
             family == Family.A7XX_LOW -> R.string.gpuinfo_experimental
             else -> R.string.gpuinfo_below_tested
@@ -70,6 +76,20 @@ data class GpuInfo(
 
         fun detect(): GpuInfo {
             val adreno = File("/sys/class/kgsl/kgsl-3d0").exists() || File("/vendor/lib64/hw/vulkan.adreno.so").exists()
+            val mali = !adreno && com.droiddeck.launcher.core.DeviceSupport.mali()
+            if (mali) {
+                val fromKernel = listOf("/sys/class/misc/mali0/device/gpuinfo", "/sys/devices/platform/mali/gpuinfo")
+                    .firstNotNullOfOrNull { FileUtils.readString(File(it))?.trim()?.takeIf(String::isNotEmpty) }.orEmpty()
+                val fromVulkan = VulkanInfo.cachedOrNull()?.get("device").orEmpty()
+                val rawMali = fromKernel.ifBlank { fromVulkan }
+                val name = MaliProfile.name(rawMali)
+                val soc = if (Build.VERSION.SDK_INT >= 31) Build.SOC_MODEL.takeIf { it.isNotBlank() && it != Build.UNKNOWN }.orEmpty() else ""
+                return GpuInfo(
+                    name = name.ifBlank { "Mali" }, model = MaliProfile.model(rawMali),
+                    family = familyOf(adreno, mali, MaliProfile.model(rawMali)), soc = soc, oneUi8Gen2 = false,
+                    modelSource = if (name.isBlank()) "" else if (fromKernel.isNotBlank()) "kernel" else "vulkan",
+                )
+            }
             val raw = FileUtils.readString(File("/sys/class/kgsl/kgsl-3d0/gpu_model"))?.trim()
             val chipId = FileUtils.readString(File("/sys/class/kgsl/kgsl-3d0/gpu_chipid"))?.trim().orEmpty()
             val soc = if (adreno) SocNames.label() else ""
@@ -90,6 +110,8 @@ data class GpuInfo(
                 verifiedDevice = adreno && verifiedOn(model, Build.MODEL),
             )
         }
+
+        internal fun maliSupport(sdk: Int): Support = if (sdk >= 35) Support.UNTESTED else Support.UNSUPPORTED
 
         internal fun verifiedOn(model: Int, device: String): Boolean =
             model == 722 && device.equals("Retroid Pocket Duo", ignoreCase = true)
@@ -132,6 +154,12 @@ data class GpuInfo(
             model >= 700 -> Family.A7XX
             model >= 600 -> Family.A6XX
             else -> Family.ADRENO_UNKNOWN
+        }
+
+        internal fun familyOf(adreno: Boolean, mali: Boolean, model: Int): Family = when {
+            adreno -> familyOf(true, model)
+            mali -> Family.MALI
+            else -> Family.NOT_ADRENO
         }
     }
 }

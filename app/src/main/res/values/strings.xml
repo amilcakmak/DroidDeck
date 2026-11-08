@@ -2106,6 +2106,7 @@
     <string name="look_anime_edge_desc">Toon outlines plus sharpening.</string>
 
     <string name="gpuinfo_not_adreno">Not an Adreno GPU</string>
+    <string name="gpuinfo_mali_experimental">Experimental Mali/Immortalis (CSF): import PanVK-kbase; only Mali-G615 has been validated</string>
     <string name="gpuinfo_supported">Supported</string>
     <string name="gpuinfo_experimental">Experimental: its drivers are test builds</string>
     <string name="gpuinfo_a850_experimental">Experimental Adreno 850 support: requires compatible experimental display and game drivers; not verified on this device</string>
