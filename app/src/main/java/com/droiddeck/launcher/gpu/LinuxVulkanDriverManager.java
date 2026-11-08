@@ -15,7 +15,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -28,6 +27,9 @@ public class LinuxVulkanDriverManager {
     public static final String LIB_NAME = "libvulkan_freedreno.so";
     public static final String ICD_NAME = "icd.json";
     public static final String META_NAME = "meta.json";
+    private static final long MAX_ARCHIVE_BYTES = 512L << 20;
+    private static final long MAX_LIBRARY_BYTES = 256L << 20;
+    private static final int MAX_META_BYTES = 64 << 10;
 
     private final Context context;
     private final File rootDir;
@@ -45,7 +47,10 @@ public class LinuxVulkanDriverManager {
     public boolean isInstalled(String id) {
         if (id == null || id.isEmpty() || id.contains("/") || id.contains("..")) return false;
         File dir = getDriverDir(id);
-        return new File(dir, LIB_NAME).isFile() && new File(dir, ICD_NAME).isFile();
+        if (!new File(dir, LIB_NAME).isFile() || !new File(dir, ICD_NAME).isFile()) return false;
+        JSONObject meta = readMeta(id);
+        return meta == null || !DriverArchivePolicy.requiresBackend(meta.optString("sourceLibraryName", ""))
+                || new File(dir, DriverArchivePolicy.BACKEND_NAME).isFile();
     }
 
     public String getIcdPath(String id) {
@@ -77,6 +82,12 @@ public class LinuxVulkanDriverManager {
         return name.isEmpty() ? id : name;
     }
 
+    public boolean isMaliRuntimeDriver(String id) {
+        JSONObject meta = readMeta(id);
+        return isInstalled(id) && meta != null
+                && DriverArchivePolicy.isMaliRuntimeLibrary(meta.optString("sourceLibraryName", ""));
+    }
+
     public String getDriverVersion(String id) {
         JSONObject m = readMeta(id);
         return m != null ? m.optString("driverVersion", "") : "";
@@ -99,27 +110,40 @@ public class LinuxVulkanDriverManager {
         try {
             String soName = null;
             JSONObject zipMeta = null;
-            try (InputStream is = context.getContentResolver().openInputStream(zipUri);
-                 ZipInputStream zis = new ZipInputStream(is)) {
-                if (is == null) throw new IOException("cannot open " + zipUri);
+            boolean backendSeen = false;
+            boolean metaSeen = false;
+            long unpacked = 0;
+            InputStream source = context.getContentResolver().openInputStream(zipUri);
+            if (source == null) throw new IOException("cannot open " + zipUri);
+            try (InputStream is = source; ZipInputStream zis = new ZipInputStream(is)) {
                 ZipEntry entry;
                 while ((entry = zis.getNextEntry()) != null) {
                     if (entry.isDirectory()) continue;
                     String base = new File(entry.getName()).getName();
-                    if (base.isEmpty()) continue;
-                    if (base.startsWith("libvulkan_freedreno") && base.endsWith(".so")) {
-                        if (soName != null) Log.w(TAG, "zip has several libvulkan_freedreno*.so; using the first (" + soName + ")");
-                        else {
-                            Files.copy(zis, new File(tmpDir, LIB_NAME).toPath(), StandardCopyOption.REPLACE_EXISTING);
-                            soName = base;
-                        }
-                    } else if (base.equals(META_NAME)) {
+                    long bytes;
+                    if (DriverArchivePolicy.isMainLibrary(base)) {
+                        if (soName != null) throw new IllegalArgumentException("driver zip must contain exactly one Vulkan library");
+                        bytes = copyBounded(zis, new File(tmpDir, LIB_NAME), MAX_LIBRARY_BYTES);
+                        soName = base;
+                    } else if (DriverArchivePolicy.isBackendLibrary(base)) {
+                        if (backendSeen) throw new IllegalArgumentException("duplicate PanVK backend in driver zip");
+                        backendSeen = true;
+                        bytes = copyBounded(zis, new File(tmpDir, DriverArchivePolicy.BACKEND_NAME), MAX_LIBRARY_BYTES);
+                    } else if (META_NAME.equals(base)) {
+                        if (metaSeen) throw new IllegalArgumentException("duplicate driver metadata in zip");
+                        metaSeen = true;
+                        byte[] data = readAllBounded(zis, MAX_META_BYTES);
+                        bytes = data.length;
                         try {
-                            zipMeta = new JSONObject(new String(readAll(zis), StandardCharsets.UTF_8));
+                            zipMeta = new JSONObject(new String(data, StandardCharsets.UTF_8));
                         } catch (Exception e) {
                             Log.w(TAG, "meta.json unreadable, ignoring: " + e.getMessage());
                         }
+                    } else {
+                        bytes = drainBounded(zis, MAX_ARCHIVE_BYTES - unpacked);
                     }
+                    unpacked += bytes;
+                    if (unpacked > MAX_ARCHIVE_BYTES) throw new IOException("driver zip exceeds unpacked size limit");
                 }
             }
             String id = adopt(tmpDir, soName, zipMeta, displayName);
@@ -142,6 +166,7 @@ public class LinuxVulkanDriverManager {
             if (soName == null) {
                 throw new IllegalArgumentException(context.getString(R.string.lvd_no_library));
             }
+            if (!DriverArchivePolicy.isMainLibrary(soName)) throw new IllegalArgumentException("invalid Vulkan library name");
             File so = new File(tmpDir, LIB_NAME);
             if (!isAarch64Elf(so)) {
                 throw new IllegalArgumentException(context.getString(R.string.lvd_not_aarch64, soName));
@@ -149,6 +174,13 @@ public class LinuxVulkanDriverManager {
             if (!containsAscii(so, "libc.so.6")) {
                 throw new IllegalArgumentException(context.getString(R.string.lvd_not_glibc, soName));
             }
+            File backend = new File(tmpDir, DriverArchivePolicy.BACKEND_NAME);
+            if (DriverArchivePolicy.requiresBackend(soName) && !backend.isFile())
+                throw new IllegalArgumentException("PanVK archive is missing its required backend library");
+            if (backend.isFile() && (!isAarch64Elf(backend) || !containsAscii(backend, "libc.so.6")))
+                throw new IllegalArgumentException("PanVK backend must be AArch64 Linux/glibc");
+            if (backend.isFile() && !DriverArchivePolicy.requiresBackend(soName))
+                throw new IllegalArgumentException("PanVK backend does not match this Vulkan library");
             String kind = zipMeta != null ? zipMeta.optString("kind", "") : "";
             if (!kind.isEmpty() && !"linux-vulkan-icd".equals(kind)) {
                 Log.w(TAG, "meta.json says kind=" + kind + ", importing anyway (the binary is glibc)");
@@ -223,12 +255,40 @@ public class LinuxVulkanDriverManager {
         }
     }
 
-    private static byte[] readAll(InputStream in) throws IOException {
-        java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
-        byte[] buf = new byte[8192];
-        int r;
-        while ((r = in.read(buf)) > 0) bos.write(buf, 0, r);
-        return bos.toByteArray();
+    private static long copyBounded(InputStream in, File out, long limit) throws IOException {
+        long total = 0;
+        try (java.io.OutputStream sink = Files.newOutputStream(out.toPath())) {
+            byte[] buffer = new byte[32768];
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                total += read;
+                if (total > limit) throw new IOException("driver library exceeds size limit");
+                sink.write(buffer, 0, read);
+            }
+        }
+        return total;
+    }
+
+    private static byte[] readAllBounded(InputStream in, int limit) throws IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        int read;
+        while ((read = in.read(buffer)) != -1) {
+            if (out.size() > limit - read) throw new IOException("driver metadata exceeds size limit");
+            out.write(buffer, 0, read);
+        }
+        return out.toByteArray();
+    }
+
+    private static long drainBounded(InputStream in, long limit) throws IOException {
+        long total = 0;
+        byte[] buffer = new byte[32768];
+        int read;
+        while ((read = in.read(buffer)) != -1) {
+            total += read;
+            if (total > limit) throw new IOException("driver zip exceeds unpacked size limit");
+        }
+        return total;
     }
 
     static boolean containsAscii(File f, String needle) {

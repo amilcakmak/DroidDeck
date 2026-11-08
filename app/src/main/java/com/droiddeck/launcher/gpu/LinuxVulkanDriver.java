@@ -11,10 +11,9 @@ public final class LinuxVulkanDriver {
     public static final String ENV = "BL_VK_DRIVER";
 
     public static final String HELP_TEXT =
-            "The driver the Steam client, the games it launches and the desktop's programs render on, "
-            + "inside the Linux runtime. Imported \"-Linux\" Turnip zips only: these are Linux processes "
-            + "and cannot load an Android or Wayland driver. Frames still reach the screen through the "
-            + "display driver below. Takes effect at the next session start.";
+            "The Vulkan driver Steam, games and desktop apps use inside the Linux runtime. Import a Linux/glibc "
+            + "driver compatible with this GPU (Turnip for Adreno or PanVK for supported Mali). Android display "
+            + "rendering still uses the device driver. Changes take effect at the next session start.";
 
     private LinuxVulkanDriver() {}
 
@@ -38,7 +37,11 @@ public final class LinuxVulkanDriver {
         LinuxVulkanDriverManager m = new LinuxVulkanDriverManager(context);
         String icd = m.getIcdPath(value);
         if (icd == null) {
-            Log.w(TAG, "imported Linux driver \"" + value + "\" is gone; using the runtime's own driver");
+            Log.w(TAG, "imported Linux driver \"" + value + "\" is missing or incomplete; using the runtime's own driver");
+            return null;
+        }
+        if (m.isMaliRuntimeDriver(value) && !com.droiddeck.launcher.core.DeviceSupport.INSTANCE.mali()) {
+            Log.w(TAG, "refusing PanVK driver \"" + value + "\" on non-Mali hardware");
             return null;
         }
         Log.i(TAG, "Linux session draws with imported driver " + value + " (" + icd + ")");
