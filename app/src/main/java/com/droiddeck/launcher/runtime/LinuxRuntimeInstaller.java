@@ -119,6 +119,10 @@ public final class LinuxRuntimeInstaller {
     private static final String USER_DATA = "root";
 
     public static boolean install(Context context, Release release, ProgressListener listener) {
+        return install(context, release, null, listener);
+    }
+
+    public static boolean install(Context context, Release release, File localArchive, ProgressListener listener) {
         Job job;
         boolean owner;
         synchronized (JOB_LOCK) {
@@ -130,7 +134,7 @@ public final class LinuxRuntimeInstaller {
         }
         if (!owner) return join(job, listener);
         try {
-            job.ok = installOnce(context.getApplicationContext(), release, new ProgressListener() {
+            job.ok = installOnce(context.getApplicationContext(), release, localArchive, new ProgressListener() {
                 @Override public void onProgress(String stage, int percent) {
                     onProgress(Step.OTHER, stage, percent);
                 }
@@ -262,13 +266,13 @@ public final class LinuxRuntimeInstaller {
         for (File file : files) file.delete();
     }
 
-    private static boolean installOnce(Context context, Release release, ProgressListener listener) {
-        File archive = new File(context.getCacheDir(), archiveName(release));
+    private static boolean installOnce(Context context, Release release, File localArchive, ProgressListener listener) {
+        File archive = localArchive == null ? new File(context.getCacheDir(), archiveName(release)) : localArchive;
         // A failed download keeps what it fetched so the next attempt resumes it; anything that
         // reached verification and failed is not trusted and is removed.
         boolean keepPartial = false;
         try {
-            deleteOtherArchives(context.getCacheDir(), archive.getName());
+            if (localArchive == null) deleteOtherArchives(context.getCacheDir(), archive.getName());
             File pendingRemoval = removalDirectory(LinuxRuntime.rootDir(context));
             if (pendingRemoval.exists() && listener != null) listener.onProgress(context.getString(R.string.rtinst_removing_leftovers), -1);
             if (!discard(pendingRemoval, null)) throw new IOException("Cannot clear the previous runtime: " + pendingRemoval);
@@ -279,12 +283,20 @@ public final class LinuxRuntimeInstaller {
                     && !SessionPrefs.allowStockProot(context))
                 throw new IOException("Cannot download proot");
             if (!AddonPack.DIRECTAUDIO.await(context)) throw new IOException("Cannot download DirectAudio");
-            boolean ok = Downloader.downloadFile(release.url, archive, true, release.sha256, (fraction) -> {
-                if (listener != null) {
-                    listener.onProgress(Step.DOWNLOADING, downloading,
-                            fraction < 0 ? -1 : Math.round(fraction * 100f));
-                }
-            });
+            boolean ok;
+            if (localArchive == null) {
+                ok = Downloader.downloadFile(release.url, archive, true, release.sha256, (fraction) -> {
+                    if (listener != null) {
+                        listener.onProgress(Step.DOWNLOADING, downloading,
+                                fraction < 0 ? -1 : Math.round(fraction * 100f));
+                    }
+                });
+            } else {
+                ok = archive.isFile() && archive.length() > 0 &&
+                        (release.size <= 0 || archive.length() == release.size) &&
+                        release.sha256.equalsIgnoreCase(Hashes.sha256(archive));
+                if (ok && listener != null) listener.onProgress(Step.DOWNLOADING, downloading, 100);
+            }
             if (!ok) {
                 Log.w(TAG, "download failed");
                 keepPartial = true;
@@ -368,7 +380,7 @@ public final class LinuxRuntimeInstaller {
             Log.e(TAG, "install", e);
             return false;
         } finally {
-            if (!keepPartial) archive.delete();
+            if (!keepPartial && localArchive == null) archive.delete();
         }
     }
 

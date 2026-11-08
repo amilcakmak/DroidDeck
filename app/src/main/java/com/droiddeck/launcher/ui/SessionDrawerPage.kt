@@ -5,6 +5,7 @@ internal enum class SessionDrawerPage(val firstControl: String) {
     GLASSES("glasses-game"),
     SECOND_SCREEN("second-screen:none"),
     DISPLAY("fg"),
+    DRIVERS("gpu-driver"),
     HUD("hud"),
     EFFECTS("look"),
     VR("steamvr"),

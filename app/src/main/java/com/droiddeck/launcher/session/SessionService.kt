@@ -767,12 +767,15 @@ class SessionService : Service() {
         guest.add("XDG_SESSION_TYPE=wayland")
         guest.add("WAYLAND_DISPLAY=wayland-0")
         guest.add("BL_ANDROID_CLIPBOARD=" + File(filesDir, "session/android-clipboard").path)
-        guest.add("GAMESCOPE_FORCE_GENERAL_QUEUE=1")
-        guest.add("MESA_LOADER_DRIVER_OVERRIDE=zink")
-        guest.add("GALLIUM_DRIVER=zink")
-        guest.add("LIBGL_KOPPER_DRI2=true")
+        if (!DeviceSupport.mali()) guest.add("GAMESCOPE_FORCE_GENERAL_QUEUE=1")
+        val softwareGpu = com.droiddeck.launcher.gpu.GpuSafety.software(this)
+        if (!softwareGpu) {
+            guest.add("MESA_LOADER_DRIVER_OVERRIDE=zink")
+            guest.add("GALLIUM_DRIVER=zink")
+            guest.add("LIBGL_KOPPER_DRI2=true")
+        }
         LinuxRuntime.vulkanIcd(this)?.let { guest.add("VK_ICD_FILENAMES=" + it.path) }
-        val linuxDriverId = SessionPrefs.linuxDriver(this)
+        val linuxDriverId = com.droiddeck.launcher.gpu.GpuSafety.linuxDriver(this)
         SessionState.runtimeDriver = linuxDriverId
         com.droiddeck.launcher.gpu.AutoDriverTrial.sessionStarting(
             this,
@@ -784,7 +787,7 @@ class SessionService : Service() {
             ?.let { guest.add(LinuxVulkanDriver.ENV + "=" + it) }
         val tuOverride = tuDebugOverride()
         val tuDriver = sysmemDriver(linuxDriverId)
-        (tuOverride ?: "sysmem".takeIf { tuDriver || SessionPrefs.tuSysmem(this) })?.let { guest.add("TU_DEBUG=$it") }
+        (tuOverride ?: "sysmem".takeIf { !DeviceSupport.mali() && (tuDriver || SessionPrefs.tuSysmem(this)) })?.let { guest.add("TU_DEBUG=$it") }
         if (SessionPrefs.zinkLazy(this)) {
             guest.add("ZINK_DESCRIPTORS=lazy")
             guest.add("ZINK_DEBUG=compact")

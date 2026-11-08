@@ -1465,6 +1465,16 @@
     <string name="drivers_using_quest">Usando el controlador de pantalla Quest incluido y el valor predeterminado del runtime.</string>
     <string name="drivers_using_quest_restart">Usando el controlador de pantalla Quest incluido y el valor predeterminado del runtime. El controlador de pantalla se aplica tras reiniciar DroidDeck.</string>
     <string name="drivers_not_a_driver">No es un zip de controlador: no es un controlador de AdrenoTools, ni un Turnip -Linux, ni un paquete Android + Linux</string>
+    <string name="drivers_driver_incompatible">Este controlador Linux no es compatible con la GPU detectada o con la versión de Android.</string>
+    <string name="drivers_mali_gpu_enabled">PanVK seleccionado. La próxima sesión Linux expondrá la GPU Mali a su controlador experimental.</string>
+    <string name="desktop_setup_choice_title">Elegir instalación de escritorio</string>
+    <string name="desktop_setup_choice_body">La instalación en línea descarga componentes verificados de Linux y el escritorio, y después prepara Steam. La instalación local usa un paquete sin conexión personal con los archivos de Steam que hayas proporcionado.</string>
+    <string name="desktop_setup_online">Instalación en línea</string>
+    <string name="desktop_setup_local">Instalación local</string>
+    <string name="offline_bundle_picker_title">Elige el paquete sin conexión de DroidDeck</string>
+    <string name="offline_bundle_incomplete">Falta el paquete sin conexión o no es válido. Elige un paquete verificado e inténtalo de nuevo.</string>
+    <string name="offline_payload_invalid">El contenido %1$s no superó la validación de tamaño o SHA-256.</string>
+    <string name="offline_desktop_mismatch">El contenido de escritorio sin conexión no coincide con esta versión de la aplicación.</string>
     <string name="drivers_import_failed">La importación falló: %1$s</string>
     <string name="drivers_imported_unnamed">Controlador importado</string>
     <string name="drivers_using_bundle">Usando %1$s como controlador de runtime y de pantalla.</string>

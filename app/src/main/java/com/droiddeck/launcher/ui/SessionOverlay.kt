@@ -40,6 +40,7 @@ import androidx.compose.material.icons.outlined.PowerSettingsNew
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.material.icons.outlined.DesktopWindows
 import androidx.compose.material.icons.outlined.Layers
+import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.ScreenShare
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PictureInPictureAlt
@@ -164,6 +165,7 @@ private val SessionDrawerPage.title: Int get() = when (this) {
     SessionDrawerPage.GLASSES -> R.string.drawer_page_glasses
     SessionDrawerPage.SECOND_SCREEN -> R.string.drawer_second_screen
     SessionDrawerPage.DISPLAY -> R.string.drawer_page_display
+    SessionDrawerPage.DRIVERS -> R.string.comp_gpu_drivers
     SessionDrawerPage.HUD -> R.string.drawer_hud
     SessionDrawerPage.VR -> R.string.vr_title
     SessionDrawerPage.EFFECTS -> R.string.drawer_page_effects
@@ -176,6 +178,7 @@ private val SessionDrawerPage.icon get() = when (this) {
     SessionDrawerPage.GLASSES -> GlassesIcon
     SessionDrawerPage.SECOND_SCREEN -> Icons.Outlined.ScreenShare
     SessionDrawerPage.DISPLAY -> Icons.Outlined.DesktopWindows
+    SessionDrawerPage.DRIVERS -> Icons.Outlined.Memory
     SessionDrawerPage.HUD -> Icons.Outlined.Speed
     SessionDrawerPage.VR -> VrHeadsetIcon
     SessionDrawerPage.EFFECTS -> Icons.Outlined.AutoFixHigh
@@ -259,6 +262,8 @@ class DrawerActions(
     val onOsc: (String) -> Unit,
     val onEditSteamTouch: (() -> Unit)? = null,
     val controller: com.droiddeck.launcher.input.ControllerPrefs.Settings? = null,
+    val gpuDrivers: GpuDriversState = GpuDriversState(),
+    val gpuActions: GpuDriversActions = GpuDriversActions(),
     val onRumble: (Boolean) -> Unit = {},
     val onSteamButton: (Boolean) -> Unit = {},
     val onQamButton: (Boolean) -> Unit = {},
@@ -533,6 +538,45 @@ internal fun SessionDrawer(open: Boolean, requestedPage: SessionDrawerPage, cont
                     modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(pageScroll.getValue(page)),
                 ) { CompositionLocalProvider(LocalChipMinWidth provides 96.dp, LocalCompactSettings provides true) {
                     when (page) {
+                        SessionDrawerPage.DRIVERS -> {
+                            val first = remember { FocusRequester() }
+                            val slots = remember { mapOf(SLOT_DISPLAY to FocusRequester(), SLOT_RUNTIME to FocusRequester()) }
+                            var driverPage by remember { mutableStateOf<String?>(null) }
+                            if (driverPage == null) {
+                                GpuDriversBody(
+                                    a.gpuDrivers, a.gpuActions, single = true, first = first, slotFocus = slots,
+                                    firstTrack = focus.track(page, "gpu-driver"),
+                                ) { slot, _ ->
+                                    driverPage = slot
+                                }
+                            } else if (driverPage == SLOT_RUNTIME) {
+                                DriverPage(
+                                    title = stringResource(R.string.comp_runtime_driver),
+                                    hint = stringResource(R.string.comp_runtime_driver_hint),
+                                    rows = a.gpuDrivers.linuxRows, selected = a.gpuDrivers.linuxSelected,
+                                    downloads = a.gpuDrivers.linuxDownloads, status = a.gpuDrivers.releaseStatus,
+                                    checking = a.gpuDrivers.checking, checkedAt = Long.MAX_VALUE,
+                                    importLabel = stringResource(R.string.comp_import_turnip), canRestore = false,
+                                    onSelect = a.gpuActions.onSelectLinux, onDelete = a.gpuActions.onRemoveLinux,
+                                    onRefresh = a.gpuActions.onRefresh, onDownload = a.gpuActions.onDownloadDriver,
+                                    onImport = a.gpuActions.onImportLinux, onRestore = {}, onBack = { driverPage = null },
+                                )
+                            } else {
+                                DriverPage(
+                                    title = stringResource(R.string.comp_display_driver),
+                                    hint = stringResource(R.string.comp_display_driver_hint),
+                                    rows = a.gpuDrivers.androidRows, selected = a.gpuDrivers.androidSelected,
+                                    downloads = a.gpuDrivers.androidDownloads, status = a.gpuDrivers.releaseStatus,
+                                    checking = a.gpuDrivers.checking, checkedAt = Long.MAX_VALUE,
+                                    importLabel = stringResource(R.string.comp_import_adrenotools),
+                                    canRestore = a.gpuDrivers.canRestoreBundled,
+                                    onSelect = a.gpuActions.onSelectAndroid, onDelete = a.gpuActions.onRemoveAndroid,
+                                    onRefresh = a.gpuActions.onRefresh, onDownload = a.gpuActions.onDownloadDriver,
+                                    onImport = a.gpuActions.onImportAndroid, onRestore = a.gpuActions.onRestoreBundled,
+                                    onBack = { driverPage = null },
+                                )
+                            }
+                        }
                         SessionDrawerPage.HUD -> DroidDeckHudSettings(host, a) { key -> focus.track(page, key) }
                         SessionDrawerPage.DISPLAY -> {
                             SettingsGroup(stringResource(R.string.drawer_page_display)) {

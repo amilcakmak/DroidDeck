@@ -165,21 +165,26 @@ object DesktopCatalog {
     }
 
     fun install(context: Context, entry: Entry, listener: LinuxRuntimeInstaller.ProgressListener?): String? = synchronized(installLock) {
-        installLocked(context, entry, null, listener)
+        installLocked(context, entry, null, null, listener)
     }
 
     fun install(context: Context, entry: Entry, cancelled: Downloader.Cancellation,
                 listener: LinuxRuntimeInstaller.ProgressListener?): String? = synchronized(installLock) {
-        installLocked(context, entry, cancelled, listener)
+        installLocked(context, entry, cancelled, null, listener)
     }
 
-    private fun installLocked(context: Context, entry: Entry, cancelled: Downloader.Cancellation?,
+    fun installLocal(context: Context, entry: Entry, archive: File, cancelled: Downloader.Cancellation,
+                     listener: LinuxRuntimeInstaller.ProgressListener?): String? = synchronized(installLock) {
+        installLocked(context, entry, cancelled, archive, listener)
+    }
+
+    private fun installLocked(context: Context, entry: Entry, cancelled: Downloader.Cancellation?, localArchive: File?,
                               listener: LinuxRuntimeInstaller.ProgressListener?): String? {
         val root = LinuxRuntime.rootDir(context)
         if (!root.isDirectory) return context.getString(R.string.deskpkg_runtime_missing)
         if (entry.id == EMULATORS_ID && desktopFromPack(root)) return installEmulators(context, entry, cancelled, listener)
-        if (entry.sha256.isEmpty()) return context.getString(R.string.deskpkg_no_checksum, entry.name)
-        val download = downloadFile(context, entry)
+        if (localArchive == null && entry.sha256.isEmpty()) return context.getString(R.string.deskpkg_no_checksum, entry.name)
+        val download = localArchive ?: downloadFile(context, entry)
         val journal = journal(root, entry.id)
         var keepDownload = false
         val release = RuntimeInstallService.holdForPackage(context, context.getString(R.string.deskpkg_installing, entry.name))
@@ -191,7 +196,9 @@ object DesktopCatalog {
             }
         }
         try {
-            if (!downloaded(download, entry)) {
+            if (localArchive != null && !downloaded(download, entry))
+                return context.getString(R.string.deskpkg_checksum_mismatch)
+            if (localArchive == null && !downloaded(download, entry)) {
                 val downloading = context.getString(R.string.user_apps_downloading, entry.name)
                 report.onProgress(LinuxRuntimeInstaller.Step.DOWNLOADING, downloading, 0)
                 val progress = java.util.function.Consumer<Float> { f ->
@@ -244,7 +251,7 @@ object DesktopCatalog {
             Log.e(TAG, "install ${entry.id}", e)
             return e.message ?: context.getString(R.string.deskpkg_install_failed)
         } finally {
-            if (!keepDownload) download.delete()
+            if (!keepDownload && localArchive == null) download.delete()
             release()
         }
     }

@@ -217,6 +217,7 @@ internal fun GpuDriversBody(
     single: Boolean,
     first: FocusRequester,
     slotFocus: Map<String, FocusRequester>,
+    firstTrack: Modifier = Modifier,
     onOpenSlot: (String, Rect) -> Unit,
 ) {
     LaunchedEffect(Unit) {
@@ -249,7 +250,7 @@ internal fun GpuDriversBody(
             val (id, title, detail) = modes[i]
             PanelRow(
                 stringResource(title), stringResource(detail), gpu.mode == id,
-                modifier = mod.then(if (gpu.mode == id) Modifier.focusRequester(first) else Modifier)
+                modifier = mod.then(if (gpu.mode == id) Modifier.focusRequester(first).then(firstTrack) else Modifier)
                     .then(if (i == 0) Modifier.onGloballyPositioned { placed[1] = it }.onFocusChanged { if (it.isFocused) revealCard() } else Modifier),
                 onClick = { if (gpu.mode != id) actions.onMode(id) },
             )

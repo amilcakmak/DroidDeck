@@ -3414,4 +3414,14 @@
     <string name="gog_repair_action">Dosyaları onar</string>
     <string name="gog_refresh_action">Kurulumu yenile</string>
     <string name="gog_select_patch">Seç</string>
+    <string name="drivers_driver_incompatible">Bu Linux sürücüsü algılanan GPU veya Android sürümüyle uyumlu değil.</string>
+    <string name="drivers_mali_gpu_enabled">PanVK seçildi. Sonraki Linux oturumunda Mali GPU deneysel sürücüye açılacak.</string>
+    <string name="desktop_setup_choice_title">Masaüstü kurulumunu seçin</string>
+    <string name="desktop_setup_choice_body">Çevrimiçi Kurulum, doğrulanmış Linux ve masaüstü bileşenlerini indirip Steam’i hazırlar. Yerel Kurulum, sağladığınız Steam istemci dosyalarını içeren kişisel bir çevrimdışı paket kullanır.</string>
+    <string name="desktop_setup_online">Çevrimiçi Kurulum</string>
+    <string name="desktop_setup_local">Yerel Kurulum</string>
+    <string name="offline_bundle_picker_title">DroidDeck çevrimdışı paketinizi seçin</string>
+    <string name="offline_bundle_incomplete">Çevrimdışı paket eksik veya geçersiz. Doğrulanmış bir paket seçip yeniden deneyin.</string>
+    <string name="offline_payload_invalid">Çevrimdışı %1$s içeriğinin boyut veya SHA-256 doğrulaması başarısız oldu.</string>
+    <string name="offline_desktop_mismatch">Çevrimdışı masaüstü paketi bu uygulama sürümüyle eşleşmiyor.</string>
 </resources>

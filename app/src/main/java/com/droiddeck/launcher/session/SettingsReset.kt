@@ -11,14 +11,14 @@ object SettingsReset {
     private const val TAG = "SettingsReset"
 
     internal val SESSION_KEYS = setOf(
-        "orientation", "launcherFullscreen", "animations", "theme", "runSteamAtStartup", "addedGamesArt",
+        "orientation", "launcherFullscreen", "animations", "theme", "runSteamAtStartup", "addedGamesArt", "desktopSetupChoice",
         "dualScreenMode", "dualScreenLauncher", "dualScreenSessionControls",
         "gameStoresEnabled", "gameStoresSpeedTier", "gameStoresParallel", "storesOpenTab", "storesShowMature",
         "storesInstallLanguage",
         "hud", "hudDeck", "hudFps", "hudBattery", "hudGraph", "hudColor", "hudOpacity", "__KEEP_droidDeckHud__", "__KEEP_droidDeckHudPos__", "backActionsInverted", "backDoubleTapMs", "touch", "osc", "shape", "steamController",
         "gamepadLeft", "gamepadRight", "pipAutoEnter", "unfoldedControls", "unfoldedControlsWithController",
         "stretch16x9", "picturePosition", "railLabels",
-        "gpuDriverMode", "androidDriver", "linuxDriver", "linuxDriver.steam", "linuxDriver.desktop",
+        "gpuDriverMode", "androidDriver", "linuxDriver", "linuxDriver.steam", "linuxDriver.desktop", "gpuSafety",
         "tuSysmem", "glThread", "noGlError", "zinkLazy", "mangoapp", "gpuClockPin", "gamescopeRealtime", "ramCapMb", "vramCapMb", "zramClient",
         "directAudio", "mic", "wifiDiscovery", "clientCpusOverride", "clientCpus", "gameCpus",
         "noXalia", "fastSync", "fsyncFirst", "syncFallback", "prootNoSeccomp", "prootFastPath", "cursorComposite",

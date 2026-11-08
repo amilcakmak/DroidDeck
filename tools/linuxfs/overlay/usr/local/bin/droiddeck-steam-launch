@@ -2,7 +2,7 @@
 set -u
 ui=${1:-desktop}
 target=${2:-}
-case $ui in desktop|bigpicture) ;; *) echo "usage: $0 desktop|bigpicture [appid|steam://url]" >&2; exit 64 ;; esac
+case $ui in desktop) ;; *) echo "usage: $0 desktop [appid|steam://url]" >&2; exit 64 ;; esac
 url=
 case $target in
   "") ;;

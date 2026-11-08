@@ -1,6 +1,7 @@
 package com.droiddeck.launcher.runtime;
 
 import com.droiddeck.launcher.core.AddonPack;
+import com.droiddeck.launcher.gpu.GpuSafety;
 import android.content.Context;
 import android.os.Process;
 import android.system.ErrnoException;
@@ -25,6 +26,7 @@ public final class LinuxRuntime {
     public static final String MODE_RUN = "run";
     public static final String EXTRA_LINUX_MODE = "linux_mode";
     private static final String KGSL_DEVICE = "/dev/kgsl-3d0";
+    private static final String MALI_DEVICE = "/dev/mali0";
     public static final String GUEST_RUNTIME_DIR = "/run/droiddeck";
     private static final String SYSTEM_FONTS = "/system/fonts";
     private static final String GUEST_SYSTEM_FONTS = "/usr/local/share/fonts/android";
@@ -264,11 +266,15 @@ public final class LinuxRuntime {
         if (unreadablePciDevice()) {
             bind(cmd, new File(root, "etc/droiddeck/empty").getPath() + ":/sys/bus/pci/devices");
         }
-        bindGpuNode(context, cmd);
+        boolean software = GpuSafety.software(context);
+        if (!software) bindGpuNode(context, cmd);
         bindAdrenoStats(cmd, extraBinds);
         bindCpuTemps(cmd, root);
         if (extraBinds != null) {
             for (String spec : extraBinds) bind(cmd, spec);
+        }
+        if (software && !hideGpuNodes(context, cmd)) {
+            throw new IllegalStateException("could not hide GPU devices for software mode");
         }
         List<String> specs = new ArrayList<>();
         for (int i = 0; i + 1 < cmd.size(); i += 2) specs.add(cmd.get(i + 1));
@@ -284,13 +290,52 @@ public final class LinuxRuntime {
         return false;
     }
 
+    private static File[] gpuNodes() {
+        File[] listed = new File("/dev").listFiles((dir, name) ->
+                name.startsWith("mali") || name.startsWith("panfrost") || name.startsWith("kgsl"));
+        if (listed != null && listed.length > 0) return listed;
+        List<File> found = new ArrayList<>();
+        for (String name : new String[]{"mali0", "mali1", "panfrost0", "panfrost1", "kgsl-3d0"}) {
+            File node = new File("/dev", name);
+            try {
+                Os.stat(node.getPath());
+                found.add(node);
+            } catch (ErrnoException ignored) {
+            }
+        }
+        return found.toArray(new File[0]);
+    }
+
+    private static boolean hideGpuNodes(Context context, List<String> cmd) {
+        File empty = new File(liveDir(context), "empty-gpu-node");
+        File emptyDri = new File(liveDir(context), "empty-dri");
+        try {
+            if (empty.exists() && !empty.isFile() && !empty.delete()) return false;
+            if (!empty.isFile() && !empty.createNewFile()) return false;
+            if (!emptyDri.isDirectory() && !emptyDri.mkdirs()) return false;
+        } catch (IOException e) {
+            android.util.Log.w("LinuxRuntime", "gpu: cannot create software-mode device masks", e);
+            return false;
+        }
+        for (File node : gpuNodes()) bind(cmd, empty.getPath() + ":" + node.getPath());
+        bind(cmd, emptyDri.getPath() + ":/dev/dri");
+        return true;
+    }
+
     private static void bindGpuNode(Context context, List<String> cmd) {
         StructStat st;
+        String gpuDevice = KGSL_DEVICE;
         try {
-            st = Os.stat(KGSL_DEVICE);
+            st = Os.stat(gpuDevice);
         } catch (ErrnoException e) {
-            return;
+            try {
+                gpuDevice = MALI_DEVICE;
+                st = Os.stat(gpuDevice);
+            } catch (ErrnoException missingGpu) {
+                return;
+            }
         }
+        boolean mali = MALI_DEVICE.equals(gpuDevice);
         long dev = st.st_rdev;
         long major = ((dev >> 8) & 0xfff) | ((dev >> 32) & ~0xfffL);
         long minor = (dev & 0xff) | ((dev >> 12) & ~0xffL);
@@ -307,21 +352,22 @@ public final class LinuxRuntime {
             Files.write(new File(drm, "dev").toPath(),
                     (major + ":" + minor + "\n").getBytes(StandardCharsets.UTF_8));
             Files.write(new File(device, "uevent").toPath(),
-                    "DRIVER=kgsl-3d0\nMODALIAS=platform:kgsl-3d0\n".getBytes(StandardCharsets.UTF_8));
+                    (mali ? "DRIVER=panfrost\nMODALIAS=platform:mali\n" :
+                            "DRIVER=kgsl-3d0\nMODALIAS=platform:kgsl-3d0\n").getBytes(StandardCharsets.UTF_8));
             File subsystem = new File(device, "subsystem");
             if (!Files.isSymbolicLink(subsystem.toPath())) {
                 Os.symlink("/sys/bus/platform", subsystem.getPath());
             }
             File driver = new File(device, "driver");
             if (!Files.isSymbolicLink(driver.toPath())) {
-                Os.symlink("/sys/bus/platform/drivers/msm_drm", driver.getPath());
+                Os.symlink("/sys/bus/platform/drivers/" + (mali ? "panfrost" : "msm_drm"), driver.getPath());
             }
         } catch (IOException | ErrnoException e) {
             return;
         }
         bind(cmd, new File(base, "sys").getPath() + ":/sys/dev/char");
         bind(cmd, dri.getPath() + ":/dev/dri");
-        bind(cmd, KGSL_DEVICE + ":/dev/dri/" + node);
+        bind(cmd, gpuDevice + ":/dev/dri/" + node);
         bindDrmClass(base, cmd, node, major + ":" + minor);
     }
 

@@ -27,9 +27,9 @@ public class LinuxVulkanDriverManager {
     public static final String LIB_NAME = "libvulkan_freedreno.so";
     public static final String ICD_NAME = "icd.json";
     public static final String META_NAME = "meta.json";
-    private static final long MAX_ARCHIVE_BYTES = 512L << 20;
-    private static final long MAX_LIBRARY_BYTES = 256L << 20;
-    private static final int MAX_META_BYTES = 64 << 10;
+    private static final long MAX_ARCHIVE_BYTES = DriverArchivePolicy.MAX_ARCHIVE_BYTES;
+    private static final long MAX_LIBRARY_BYTES = DriverArchivePolicy.MAX_LIBRARY_BYTES;
+    private static final int MAX_META_BYTES = DriverArchivePolicy.MAX_META_BYTES;
 
     private final Context context;
     private final File rootDir;
@@ -49,8 +49,15 @@ public class LinuxVulkanDriverManager {
         File dir = getDriverDir(id);
         if (!new File(dir, LIB_NAME).isFile() || !new File(dir, ICD_NAME).isFile()) return false;
         JSONObject meta = readMeta(id);
-        return meta == null || !DriverArchivePolicy.requiresBackend(meta.optString("sourceLibraryName", ""))
-                || new File(dir, DriverArchivePolicy.BACKEND_NAME).isFile();
+        if (meta == null) return true;
+        if (DriverArchivePolicy.requiresBackend(meta.optString("sourceLibraryName", ""))
+                && !new File(dir, DriverArchivePolicy.BACKEND_NAME).isFile()) return false;
+        org.json.JSONArray libs = meta.optJSONArray("runtimeLibraries");
+        for (int i = 0; libs != null && i < libs.length(); i++) {
+            String name = libs.optString(i, "");
+            if (!DriverArchivePolicy.isRuntimeLibrary(name) || !new File(dir, name).isFile()) return false;
+        }
+        return true;
     }
 
     public String getIcdPath(String id) {
@@ -88,6 +95,12 @@ public class LinuxVulkanDriverManager {
                 && DriverArchivePolicy.isMaliRuntimeLibrary(meta.optString("sourceLibraryName", ""));
     }
 
+    public boolean isSoftwareDriver(String id) {
+        if (!isInstalled(id)) return false;
+        JSONObject meta = readMeta(id);
+        return meta != null && DriverArchivePolicy.isSoftwareLibrary(meta.optString("sourceLibraryName", ""));
+    }
+
     public String getDriverVersion(String id) {
         JSONObject m = readMeta(id);
         return m != null ? m.optString("driverVersion", "") : "";
@@ -111,6 +124,7 @@ public class LinuxVulkanDriverManager {
             String soName = null;
             JSONObject zipMeta = null;
             boolean backendSeen = false;
+            java.util.Set<String> runtimeSeen = new java.util.LinkedHashSet<>();
             boolean metaSeen = false;
             long unpacked = 0;
             InputStream source = context.getContentResolver().openInputStream(zipUri);
@@ -129,6 +143,10 @@ public class LinuxVulkanDriverManager {
                         if (backendSeen) throw new IllegalArgumentException("duplicate PanVK backend in driver zip");
                         backendSeen = true;
                         bytes = copyBounded(zis, new File(tmpDir, DriverArchivePolicy.BACKEND_NAME), MAX_LIBRARY_BYTES);
+                    } else if (DriverArchivePolicy.isRuntimeLibrary(base)) {
+                        if (!runtimeSeen.add(base)) throw new IllegalArgumentException("duplicate runtime library in driver zip: " + base);
+                        bytes = copyBounded(zis, new File(tmpDir, base),
+                                Math.min(DriverArchivePolicy.MAX_RUNTIME_LIBRARY_BYTES, MAX_ARCHIVE_BYTES - unpacked));
                     } else if (META_NAME.equals(base)) {
                         if (metaSeen) throw new IllegalArgumentException("duplicate driver metadata in zip");
                         metaSeen = true;
@@ -181,6 +199,17 @@ public class LinuxVulkanDriverManager {
                 throw new IllegalArgumentException("PanVK backend must be AArch64 Linux/glibc");
             if (backend.isFile() && !DriverArchivePolicy.requiresBackend(soName))
                 throw new IllegalArgumentException("PanVK backend does not match this Vulkan library");
+            java.util.List<String> runtimeLibs = new java.util.ArrayList<>();
+            File[] staged = tmpDir.listFiles();
+            if (staged != null) {
+                java.util.Arrays.sort(staged);
+                for (File f : staged) {
+                    if (!DriverArchivePolicy.isRuntimeLibrary(f.getName())) continue;
+                    if (!isAarch64Elf(f) || !containsAscii(f, "libc.so.6"))
+                        throw new IllegalArgumentException(f.getName() + " must be AArch64 Linux/glibc, not Android/Bionic");
+                    runtimeLibs.add(f.getName());
+                }
+            }
             String kind = zipMeta != null ? zipMeta.optString("kind", "") : "";
             if (!kind.isEmpty() && !"linux-vulkan-icd".equals(kind)) {
                 Log.w(TAG, "meta.json says kind=" + kind + ", importing anyway (the binary is glibc)");
@@ -200,7 +229,8 @@ public class LinuxVulkanDriverManager {
             icd.put("file_format_version", "1.0.0");
             JSONObject icdBody = new JSONObject();
             icdBody.put("library_path", new File(dir, LIB_NAME).getAbsolutePath());
-            icdBody.put("api_version", "1.1.274");
+            String apiVersion = DriverArchivePolicy.apiVersion(zipMeta != null ? zipMeta.optString("vulkanApiVersion", "") : "");
+            icdBody.put("api_version", apiVersion);
             icd.put("ICD", icdBody);
             if (!FileUtils.writeString(new File(tmpDir, ICD_NAME), icd.toString(2))) throw new IOException("cannot write icd.json");
 
@@ -212,6 +242,9 @@ public class LinuxVulkanDriverManager {
             meta.put("libc", "glibc");
             meta.put("minGlibc", minGlibc);
             meta.put("sourceLibraryName", soName);
+            meta.put("vulkanApiVersion", apiVersion);
+            meta.put("gpuVendor", DriverArchivePolicy.isSoftwareLibrary(soName) ? "software" : "gpu");
+            meta.put("runtimeLibraries", new org.json.JSONArray(runtimeLibs));
             meta.put("importedAt", System.currentTimeMillis());
             if (!FileUtils.writeString(new File(tmpDir, META_NAME), meta.toString(2))) throw new IOException("cannot write meta.json");
 

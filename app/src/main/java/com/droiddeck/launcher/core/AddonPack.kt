@@ -97,14 +97,23 @@ internal class AddonPack(
         return false
     }
 
-    private fun install(context: Context): Boolean {
+    fun installLocal(context: Context, archive: File): Boolean = synchronized(lock) {
+        if (installed(context)) return@synchronized true
+        if (mutableState.value is State.Downloading || !available || !archive.isFile ||
+            (size > 0 && archive.length() != size) || !sha256.equals(Hashes.sha256(archive), ignoreCase = true))
+            return@synchronized false
+        mutableState.value = State.Downloading(1f)
+        install(context.applicationContext, archive).also { mutableState.value = if (it) State.Ready else State.Failed }
+    }
+
+    private fun install(context: Context, localArchive: File? = null): Boolean {
         if (!available) {
             Log.w(TAG, if (reuseDeviceCopy) "$name: this build has no pack and none is installed" else "$name: this build has no pack")
             return false
         }
         val root = root(context).apply { mkdirs() }
-        val archive = File(root, "$sha256.tar.zst")
-        val downloaded = urls.any { url ->
+        val archive = localArchive ?: File(root, "$sha256.tar.zst")
+        val downloaded = localArchive != null || urls.any { url ->
             Downloader.downloadFile(url, archive, true, sha256) { p -> mutableState.value = State.Downloading(p.coerceIn(0f, 1f)) }
                 .also { if (!it) archive.delete() }
         }
@@ -120,7 +129,7 @@ internal class AddonPack(
             check(staging.renameTo(target)) { "could not move the $name pack into place" }
         } finally {
             staging.deleteRecursively()
-            archive.delete()
+            if (localArchive == null) archive.delete()
         }
         root.listFiles().orEmpty().filter { it.name != sha256 }.forEach { it.deleteRecursively() }
         return true

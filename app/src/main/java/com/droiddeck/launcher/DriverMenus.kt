@@ -16,6 +16,7 @@ import com.droiddeck.launcher.gpu.AutoPicks
 import com.droiddeck.launcher.gpu.DriverBundle
 import com.droiddeck.launcher.gpu.DriverPairs
 import com.droiddeck.launcher.gpu.GpuInfo
+import com.droiddeck.launcher.gpu.GpuSafety
 import com.droiddeck.launcher.gpu.LinuxVulkanDriver
 import com.droiddeck.launcher.gpu.LinuxVulkanDriverManager
 import com.droiddeck.launcher.gpu.TurnipDriver
@@ -152,7 +153,7 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
                 true, origin(id),
             )
         }
-        linuxSelected = SessionPrefs.linuxDriver(activity)
+        linuxSelected = GpuSafety.linuxDriver(activity)
         mode = SessionPrefs.gpuDriverMode(activity)
         val td = TurnipDriver(activity)
         val auto = td.autoId()
@@ -333,6 +334,7 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
                     val displayChanged = previousDisplay != displayId
                     SessionPrefs.setAndroidDriver(activity, displayId)
                     SessionPrefs.setLinuxDriver(activity, linuxId)
+                    GpuSafety.setProfile(activity, GpuSafety.AUTO)
                     val restart = displayChanged && CompositorHost.isStarted
                     if (auto) {
                         val trial = AutoDriverTrial.current(activity)
@@ -427,11 +429,40 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
         }, "import-driver").start()
     }
 
+    private fun linuxDriverCompatible(id: String): Boolean {
+        if (id.isEmpty()) return true
+        val manager = LinuxVulkanDriverManager(activity)
+        if (manager.isSoftwareDriver(id)) return true
+        val maliDriver = manager.isMaliRuntimeDriver(id)
+        return if (com.droiddeck.launcher.core.DeviceSupport.mali()) {
+            maliDriver && android.os.Build.VERSION.SDK_INT >= 35
+        } else {
+            !maliDriver
+        }
+    }
+
     fun selectDriver(id: String, linux: Boolean) {
         val bundle = DriverBundle.containing(activity, id, linux)
+        if (bundle != null && !linuxDriverCompatible(bundle.linuxId)) {
+            android.widget.Toast.makeText(activity, R.string.drivers_driver_incompatible, android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
+        if (linux && !linuxDriverCompatible(id)) {
+            android.widget.Toast.makeText(activity, R.string.drivers_driver_incompatible, android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
         when {
             bundle != null -> useBundle(bundle)
-            linux -> SessionPrefs.setLinuxDriver(activity, id)
+            linux -> {
+                val manager = LinuxVulkanDriverManager(activity)
+                val maliDriver = manager.isMaliRuntimeDriver(id)
+                val softwareDriver = manager.isSoftwareDriver(id)
+                SessionPrefs.setLinuxDriver(activity, id)
+                GpuSafety.setProfile(activity, GpuSafety.profileForDriver(maliDriver, softwareDriver))
+                if (maliDriver) android.widget.Toast.makeText(
+                    activity, R.string.drivers_mali_gpu_enabled, android.widget.Toast.LENGTH_LONG,
+                ).show()
+            }
             else -> SessionPrefs.setAndroidDriver(activity, id)
         }
         pairModeOpen = false
@@ -440,8 +471,10 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
     }
 
     private fun useBundle(bundle: DriverBundle.Bundle): String {
+        if (!linuxDriverCompatible(bundle.linuxId)) return activity.getString(R.string.drivers_driver_incompatible)
         val displayChanged = SessionPrefs.androidDriver(activity) != bundle.androidId
         DriverBundle.select(activity, bundle)
+        GpuSafety.setProfile(activity, GpuSafety.AUTO)
         if (mode == SessionPrefs.GPU_DRIVERS_AUTO) setMode(auto = false, mix = true)
         return activity.getString(
             if (displayChanged && CompositorHost.isStarted) R.string.drivers_using_bundle_restart else R.string.drivers_using_bundle,
@@ -460,7 +493,10 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
         }
         if (linux) {
             LinuxVulkanDriverManager(activity).removeDriver(id)
-            if (SessionPrefs.linuxDriver(activity) == id) SessionPrefs.setLinuxDriver(activity, "")
+            if (SessionPrefs.linuxDriver(activity) == id) {
+                SessionPrefs.setLinuxDriver(activity, "")
+                GpuSafety.setProfile(activity, GpuSafety.AUTO)
+            }
         } else {
             val td = TurnipDriver(activity)
             if (id in TurnipDriver.BUNDLED) td.hideBundled(id) else td.remove(id)

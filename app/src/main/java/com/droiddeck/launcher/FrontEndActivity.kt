@@ -455,6 +455,26 @@ class FrontEndActivity : ComponentActivity() {
             romsDir = path
         }
     }
+    private var offlineBundleImporting by mutableStateOf(false)
+    private val pickOfflineBundle = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        if (r.resultCode == RESULT_OK) InAppFilePicker.pickedFile(r.data)?.let { bundle ->
+            offlineBundleImporting = true
+            Thread({
+                val problem = com.droiddeck.launcher.runtime.OfflineBundle.import(this, bundle)
+                ui.post {
+                    offlineBundleImporting = false
+                    if (problem != null) {
+                        android.widget.Toast.makeText(this, problem, android.widget.Toast.LENGTH_LONG).show()
+                    } else {
+                        SessionPrefs.setDesktopSetupChoice(this, "local")
+                        startSession(Intent(this, SessionActivity::class.java)
+                            .putExtra(SessionService.EXTRA_MODE, SessionService.MODE_DESKTOP)
+                            .putExtra(SessionActivity.EXTRA_OFFLINE_BUNDLE, true), steamSession = true)
+                    }
+                }
+            }, "offline-bundle-import").start()
+        }
+    }
     private var settingsMode by mutableStateOf<String?>(null)
     private var resolution by mutableStateOf(com.droiddeck.launcher.session.SessionDisplay.DEFAULT_RESOLUTION)
     private var fexPreset by mutableStateOf("")
@@ -1101,6 +1121,8 @@ class FrontEndActivity : ComponentActivity() {
                         storesSort = storesSort,
                         storesView = storesView,
                         storeDownloadsActive = com.droiddeck.launcher.stores.StoresState.activeDownloads,
+                        setupChoiceRequired = !shortcutPicker && SessionPrefs.desktopSetupChoice(this).isBlank(),
+                        offlineBundleImporting = offlineBundleImporting,
                     ),
                     FrontEndActions(
                         onPlay = { playSteam() },
@@ -1154,8 +1176,24 @@ class FrontEndActivity : ComponentActivity() {
                             android.widget.Toast.makeText(this, R.string.game_link_copied, android.widget.Toast.LENGTH_SHORT).show()
                         },
                         onDesktop = {
+                            val bundle = com.droiddeck.launcher.runtime.OfflineBundle.current(this)
                             startSession(Intent(this, SessionActivity::class.java)
-                                .putExtra(SessionService.EXTRA_MODE, SessionService.MODE_DESKTOP))
+                                .putExtra(SessionService.EXTRA_MODE, SessionService.MODE_DESKTOP)
+                                .putExtra(SessionActivity.EXTRA_OFFLINE_BUNDLE, bundle != null)
+                                .putExtra(SessionActivity.EXTRA_ENSURE_STEAM,
+                                    bundle == null && !com.droiddeck.launcher.runtime.SteamClientOffline.installed(this)),
+                                steamSession = true)
+                        },
+                        onChooseOnlineSetup = {
+                            if (startSession(Intent(this, SessionActivity::class.java)
+                                    .putExtra(SessionService.EXTRA_MODE, SessionService.MODE_DESKTOP)
+                                    .putExtra(SessionActivity.EXTRA_ENSURE_STEAM, true), steamSession = true))
+                                SessionPrefs.setDesktopSetupChoice(this, "online")
+                        },
+                        onChooseLocalSetup = {
+                            pickOfflineBundle.launch(InAppFilePicker.buildIntent(
+                                this, extensions = listOf("zip"), title = getString(R.string.offline_bundle_picker_title),
+                            ))
                         },
                         onEmulator = { e -> launchProgram(e.program) },
                         onUserApp = { app ->

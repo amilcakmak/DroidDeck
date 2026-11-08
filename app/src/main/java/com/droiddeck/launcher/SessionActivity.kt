@@ -299,6 +299,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         return true
     }
     private val uiHandler = Handler(Looper.getMainLooper())
+    private val drivers = DriverMenus(this, uiHandler)
     private var pendingBackAction: Runnable? = null
     private val backQamInput = com.droiddeck.launcher.input.BackQamInput(
         setPressed = { padBridge?.setBackQamPressed(it) },
@@ -451,6 +452,15 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
     private var lossless by mutableStateOf(Lossless.State.NONE)
     private val pickLossless = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         if (r.resultCode == RESULT_OK) InAppFilePicker.pickedFile(r.data)?.let { importLossless(it) }
+    }
+    private val pickLinuxDriver = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        if (r.resultCode == RESULT_OK) InAppFilePicker.pickedUri(r.data)?.let { drivers.importDriver(it, linux = true) }
+    }
+    private val pickAndroidDriver = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        if (r.resultCode == RESULT_OK) InAppFilePicker.pickedUri(r.data)?.let { drivers.importDriver(it, linux = false) }
+    }
+    private val pickAnyDriver = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        if (r.resultCode == RESULT_OK) InAppFilePicker.pickedUri(r.data)?.let { drivers.importDriver(it, linux = null) }
     }
     private var frameGen by mutableStateOf(FrameGen.Mode.OFF)
     private var frameGenPip = false
@@ -736,15 +746,24 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         if (!SessionState.running) {
             val repair = intent.getBooleanExtra(EXTRA_REPAIR_RUNTIME, false)
             intent.removeExtra(EXTRA_REPAIR_RUNTIME)
-            val needRuntime = repair || com.droiddeck.launcher.runtime.LinuxRuntimeInstaller.installedVersion(this) == null
+            val offline = intent.getBooleanExtra(EXTRA_OFFLINE_BUNDLE, false)
+            val ensureSteam = intent.getBooleanExtra(EXTRA_ENSURE_STEAM, false)
+            val offlineBundle = if (offline) com.droiddeck.launcher.runtime.OfflineBundle.current(this) else null
+            val needRuntime = repair || com.droiddeck.launcher.runtime.LinuxRuntimeInstaller.installedVersion(this) == null ||
+                (offline && offlineBundle?.manifest?.payloads?.get("runtime")?.version !=
+                    com.droiddeck.launcher.runtime.LinuxRuntimeInstaller.installedVersion(this))
             val needResume = !needRuntime && com.droiddeck.launcher.runtime.DesktopCatalog.interrupted(this).isNotEmpty()
             val needDesktop = intent.getStringExtra(SessionService.EXTRA_MODE) == SessionService.MODE_DESKTOP &&
-                (repair || !com.droiddeck.launcher.runtime.DesktopCatalog.desktopInstalled(this))
+                (repair || !com.droiddeck.launcher.runtime.DesktopCatalog.desktopInstalled(this) ||
+                    (offline && offlineBundle?.manifest?.payloads?.get("desktop")?.version !=
+                        com.droiddeck.launcher.runtime.DesktopCatalog.installed(this, com.droiddeck.launcher.runtime.DesktopCatalog.DESKTOP_ID)))
             val program = intent.getStringExtra(SessionService.EXTRA_PROGRAM)
             val protonUser = (intent.getStringExtra(SessionService.EXTRA_MODE) ?: SessionService.MODE_STEAM) == SessionService.MODE_STEAM ||
                 program == com.droiddeck.launcher.runtime.BattleNet.PROGRAM || program == com.droiddeck.launcher.session.NoSteamLaunch.PROTON_RUN
             val needProton = protonUser && com.droiddeck.launcher.runtime.DesktopCatalog.protonSeedNeeded(this)
-            if (needRuntime || needResume || needDesktop || needProton) installThenStart(needRuntime, needDesktop, needProton, needResume)
+            val needSteam = ensureSteam && !com.droiddeck.launcher.runtime.SteamClientOffline.installed(this)
+            if (needRuntime || needResume || needDesktop || needProton || offline || needSteam)
+                installThenStart(needRuntime, needDesktop, needProton, needResume, offline, needSteam)
         }
         hud = DroidDeckHudHost(this)
         hud.onConfigChanged = { hudConfig = DroidDeckHudConfig.load(this) }
@@ -1147,6 +1166,24 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
             title = if (SessionState.mode == SessionService.MODE_RUN)
                 com.droiddeck.launcher.frontend.Library.nameForProgram(SessionState.program) ?: getString(R.string.session_title_game) else null,
             isHomeApp = isHomeApp,
+            gpuDrivers = drivers.state(),
+            gpuActions = com.droiddeck.launcher.ui.GpuDriversActions(
+                onAuto = { drivers.setMode(it) },
+                onPair = { drivers.selectPair(it) },
+                onRefresh = { drivers.refreshDrivers() },
+                onSelectLinux = { drivers.selectDriver(it, linux = true) },
+                onSelectAndroid = { drivers.selectDriver(it, linux = false) },
+                onRemoveLinux = { drivers.deleteDriver(it, linux = true) },
+                onRemoveAndroid = { drivers.deleteDriver(it, linux = false) },
+                onDownloadDriver = { drivers.downloadReleaseDriver(it) },
+                onImportLinux = { pickLinuxDriver.launch(InAppFilePicker.buildIntent(this, listOf("zip"), getString(R.string.drivers_pick_linux))) },
+                onImportAndroid = { pickAndroidDriver.launch(InAppFilePicker.buildIntent(this, listOf("zip"), getString(R.string.drivers_pick_android))) },
+                onImportZip = { pickAnyDriver.launch(InAppFilePicker.buildIntent(this, listOf("zip"), getString(R.string.drivers_pick_any))) },
+                onRestoreBundled = { TurnipDriver(this).restoreBundled(); drivers.refreshDrivers() },
+                onMode = { drivers.chooseMode(it) },
+                onRestart = { drivers.restartApp() },
+                onTpUbwcMode = { drivers.chooseTpUbwcMode(it) },
+            ),
             androidApps = androidApps,
             hudOn = hudOn,
             hudConfig = hudConfig,
@@ -1872,7 +1909,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
     private val installingRuntime get() = localInstalling || SessionState.installing != null
     private var repairOffered by mutableStateOf(false)
 
-    private fun installThenStart(runtime: Boolean, desktop: Boolean, proton: Boolean = false, resume: Boolean = false) {
+    private fun installThenStart(runtime: Boolean, desktop: Boolean, proton: Boolean = false, resume: Boolean = false, offline: Boolean = false, ensureSteam: Boolean = false) {
         if (SessionState.stopRequested) return
         val worker = Any()
         activeInstallWorker = worker
@@ -1883,14 +1920,28 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
             "${SessionState.installing}.installing",
             mapOf("component" to SessionState.installing),
         )
-        val first = if (runtime || resume) RUNTIME_LINES else if (desktop) DESKTOP_LINES else PROTON_LINES
+        val first = if (runtime || resume || offline) RUNTIME_LINES else if (desktop) DESKTOP_LINES else PROTON_LINES
         loading.say(getString(first.downloading), first.topic, readable = true)
         loading.percent = -1
         Thread({
             var failedComponent: String? = null
             var problem: String? = null
+            val bundle = if (offline) com.droiddeck.launcher.runtime.OfflineBundle.current(this) else null
+            if (offline && bundle == null) {
+                problem = getString(R.string.offline_bundle_incomplete)
+                failedComponent = "offline"
+            }
+            if (problem == null && bundle != null) {
+                if (!com.droiddeck.launcher.core.AddonPack.PROOT.installLocal(this, bundle.file("proot"))) {
+                    problem = getString(R.string.offline_payload_invalid, "proot")
+                    failedComponent = "offline"
+                } else if (!com.droiddeck.launcher.core.AddonPack.DIRECTAUDIO.installLocal(this, bundle.file("directaudio"))) {
+                    problem = getString(R.string.offline_payload_invalid, "DirectAudio")
+                    failedComponent = "offline"
+                }
+            }
             if (runtime) {
-                problem = installRuntime()
+                problem = if (bundle == null) installRuntime() else installRuntime(bundle)
                 if (problem == null) SessionEvents.record("runtime.ready") else failedComponent = "runtime"
             }
             if (problem == null && resume && !SessionState.stopRequested) {
@@ -1909,8 +1960,19 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
             if (problem == null && desktop && !SessionState.stopRequested) {
                 if (activeInstallWorker === worker) SessionState.installing = "desktop"
                 SessionEvents.transition(SessionPhase.INSTALLING_RUNTIME, "desktop.installing", mapOf("component" to "desktop"))
-                problem = installDesktop()
+                problem = if (bundle == null) installDesktop() else installDesktop(bundle)
                 if (problem == null) SessionEvents.record("desktop.ready") else failedComponent = "desktop"
+            }
+            if (problem == null && bundle != null) {
+                problem = com.droiddeck.launcher.runtime.SteamClientOffline.install(
+                    this, bundle.file("steam"), bundle.manifest.payloads.getValue("steam"),
+                )
+                if (problem != null) failedComponent = "steam"
+                else com.droiddeck.launcher.session.SessionPrefs.setSteamClientArch(this, "arm64")
+            }
+            if (problem == null && bundle == null && ensureSteam && !SessionState.stopRequested) {
+                problem = installSteamClient()
+                if (problem != null) failedComponent = "steam"
             }
             if (problem == null && proton && !SessionState.stopRequested) {
                 if (activeInstallWorker === worker) SessionState.installing = "proton"
@@ -1936,6 +1998,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
                     val code = when (failedComponent) {
                         "runtime" -> "RUNTIME_INSTALL_FAILED"
                         "package" -> "PACKAGE_RESUME_FAILED"
+                        "offline", "steam" -> "OFFLINE_SETUP_FAILED"
                         else -> "DESKTOP_INSTALL_FAILED"
                     }
                     SessionEvents.fail(code, problem)
@@ -1944,6 +2007,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
                     focusEndedScreen()
                     return@post
                 }
+                if (bundle != null) com.droiddeck.launcher.runtime.OfflineBundle.clear(this)
                 loading.percent = -1
                 loading.say(getString(R.string.session_starting_session), LoadingState.Topic.SESSION, readable = false)
                 outputHolder().let { if (it.surface?.isValid == true) surfaceCreated(it) }
@@ -1992,7 +2056,17 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         }
     }
 
-    private fun installRuntime(): String? {
+    private fun installRuntime(bundle: com.droiddeck.launcher.runtime.OfflineBundle.Installed? = null): String? {
+        if (bundle != null) {
+            val payload = bundle.manifest.payloads.getValue("runtime")
+            val archive = bundle.file("runtime")
+            if (!com.droiddeck.launcher.runtime.OfflineBundle.verify(archive, payload))
+                return getString(R.string.offline_payload_invalid, "Linux runtime")
+            val release = com.droiddeck.launcher.runtime.LinuxRuntimeInstaller.Release(payload.version, "offline", payload.sha256, payload.size)
+            val ok = com.droiddeck.launcher.runtime.LinuxRuntimeInstaller.install(this, release, archive,
+                progressFor(RUNTIME_LINES, release.size / 1_000_000))
+            return if (ok) null else getString(R.string.session_runtime_install_failed)
+        }
         val release = com.droiddeck.launcher.runtime.LinuxRuntimeInstaller.fetchRelease()
             ?: return getString(R.string.session_runtime_catalog_unreachable)
         runCatching { com.droiddeck.launcher.runtime.RuntimeInstallService.start(this, release) }
@@ -2001,17 +2075,59 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         return if (ok) null else getString(R.string.session_runtime_install_failed)
     }
 
-    private fun installDesktop(): String? {
+    private fun installDesktop(bundle: com.droiddeck.launcher.runtime.OfflineBundle.Installed? = null): String? {
         uiHandler.post { loading.percent = -1; loading.say(getString(DESKTOP_LINES.downloading), DESKTOP_LINES.topic, readable = true) }
         val entry = com.droiddeck.launcher.runtime.DesktopCatalog.desktopEntry(this)
         val cancellation = com.droiddeck.launcher.core.Downloader.Cancellation { SessionState.stopRequested }
         SessionState.installCancellation = cancellation
         return try {
-            val problem = com.droiddeck.launcher.runtime.DesktopCatalog.install(this, entry, cancellation,
-                progressFor(DESKTOP_LINES, entry.size / 1_000_000))
+            val problem = if (bundle == null) {
+                com.droiddeck.launcher.runtime.DesktopCatalog.install(this, entry, cancellation,
+                    progressFor(DESKTOP_LINES, entry.size / 1_000_000))
+            } else {
+                val payload = bundle.manifest.payloads.getValue("desktop")
+                if (entry.version != payload.version || entry.sha256 != payload.sha256 || entry.size != payload.size)
+                    return getString(R.string.offline_desktop_mismatch)
+                com.droiddeck.launcher.runtime.DesktopCatalog.installLocal(this, entry, bundle.file("desktop"), cancellation,
+                    progressFor(DESKTOP_LINES, entry.size / 1_000_000))
+            }
             problem?.let { getString(R.string.session_desktop_install_failed, it) }
         } finally {
             if (SessionState.installCancellation === cancellation) SessionState.installCancellation = null
+        }
+    }
+
+    private fun installSteamClient(): String? {
+        if (!com.droiddeck.launcher.core.AddonPack.PROOT.await(this)) return "The guest runtime component could not be prepared."
+        if (!com.droiddeck.launcher.core.AddonPack.DIRECTAUDIO.await(this)) return "The required audio component could not be prepared."
+        val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
+        val watcher = Thread({
+            while (!cancelled.get()) {
+                if (SessionState.stopRequested) cancelled.set(true)
+                try { Thread.sleep(200) } catch (_: InterruptedException) { return@Thread }
+            }
+        }, "steam-install-cancel").apply { isDaemon = true; start() }
+        var detail: String? = null
+        return try {
+            val status = com.droiddeck.launcher.runtime.GuestCommand.run(
+                this, listOf("/usr/local/bin/droiddeck-steam-install"), logName = "steam-install", cancelled = cancelled,
+            ) { line ->
+                if (line.startsWith("== STEP ")) uiHandler.post {
+                    loading.percent = -1
+                    loading.say(line.removePrefix("== STEP ").substringAfter(' ').trim(), LoadingState.Topic.RUNTIME, readable = true)
+                }
+                if (line.startsWith("droiddeck-steam-install:")) detail = line.substringAfter(':').trim()
+            }
+            when {
+                status == 0 -> null
+                cancelled.get() -> "Steam setup was cancelled; the next setup can resume its downloads."
+                else -> detail ?: "Steam setup failed (status $status). See the steam-install tool log."
+            }
+        } catch (e: Exception) {
+            e.message ?: "Steam setup failed. See the steam-install tool log."
+        } finally {
+            cancelled.set(true)
+            watcher.interrupt()
         }
     }
 
@@ -4510,6 +4626,8 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         const val EXTRA_LINK_TASK = "linkTask"
         const val EXTRA_STEAMVR = "steamVr"
         const val EXTRA_REPAIR_RUNTIME = "repairRuntime"
+        const val EXTRA_OFFLINE_BUNDLE = "offlineBundle"
+        const val EXTRA_ENSURE_STEAM = "ensureSteam"
         private const val LEAVE_TIMEOUT_MS = 1_500L
         private const val TEXT_FIELD_TAP_MS = 1_000L
         private const val PAUSED_FRAME_MAX_EDGE = 1920f

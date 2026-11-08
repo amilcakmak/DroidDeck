@@ -379,6 +379,17 @@ object SessionPrefs {
         prefs(context).edit().putString("linuxDriver", id).apply()
     }
 
+    const val GPU_SAFETY_AUTO = "auto"
+    const val GPU_SAFETY_SOFTWARE = "software"
+    const val GPU_SAFETY_MALI = "mali"
+
+    fun gpuSafety(context: Context): String =
+        prefs(context).getString("gpuSafety", GPU_SAFETY_AUTO) ?: GPU_SAFETY_AUTO
+
+    fun setGpuSafety(context: Context, value: String) {
+        prefs(context).edit().putString("gpuSafety", value).apply()
+    }
+
     const val GPU_DRIVERS_AUTO = "auto"
     const val GPU_DRIVERS_MANUAL = "manual"
     const val GPU_DRIVERS_MIX = "mix"
@@ -914,6 +925,10 @@ object SessionPrefs {
     }
 
     fun runSteamAtStartup(context: Context): Boolean = prefs(context).getBoolean("runSteamAtStartup", false)
+    fun desktopSetupChoice(context: Context): String = prefs(context).getString("desktopSetupChoice", "").orEmpty()
+    fun setDesktopSetupChoice(context: Context, value: String) {
+        prefs(context).edit().putString("desktopSetupChoice", value.takeIf { it == "local" || it == "online" }.orEmpty()).apply()
+    }
 
     fun setRunSteamAtStartup(context: Context, on: Boolean) {
         prefs(context).edit().putBoolean("runSteamAtStartup", on).apply()

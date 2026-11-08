@@ -46,7 +46,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -168,6 +171,8 @@ class FrontEndState(
     val storesSort: String = SessionPrefs.STORES_SORTS.first(),
     val storesView: String = SessionPrefs.DEFAULT_STORES_VIEW,
     val storeDownloadsActive: Int = 0,
+    val setupChoiceRequired: Boolean = false,
+    val offlineBundleImporting: Boolean = false,
     val updates: UpdatesState = UpdatesState(),
 )
 
@@ -192,6 +197,8 @@ class FrontEndActions(
     val onEpicLauncher: () -> Unit = {},
     val onUninstallEpicLauncher: () -> Unit = {},
     val onDesktop: () -> Unit,
+    val onChooseOnlineSetup: () -> Unit = {},
+    val onChooseLocalSetup: () -> Unit = {},
     val onEmulator: (Library.Emulator) -> Unit,
     val onFlatpakApp: (String, String) -> Unit = { _, _ -> },
     val onUserApp: (com.droiddeck.launcher.runtime.UserApps.App) -> Unit = {},
@@ -427,7 +434,7 @@ fun FrontEndScreen(s: FrontEndState, a: FrontEndActions, page: (@Composable () -
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun FrontEndScreenBody(s: FrontEndState, a: FrontEndActions, page: (@Composable () -> Unit)?, frontFocus: FrontFocus) {
-    var selected by rememberSaveable { mutableStateOf(if (s.shortcutPicker) "games" else "steam") }
+    var selected by rememberSaveable { mutableStateOf(if (s.shortcutPicker) "games" else "desktop") }
     LaunchedEffect(s.shortcutPicker) { if (s.shortcutPicker) selected = "games" }
     LaunchedEffect(s.navigate) {
         val target = s.navigate ?: return@LaunchedEffect
@@ -452,6 +459,21 @@ private fun FrontEndScreenBody(s: FrontEndState, a: FrontEndActions, page: (@Com
     val colors = MaterialTheme.colorScheme
     val pal = LocalPalette.current
     val ctx = LocalContext.current
+    if (s.setupChoiceRequired) AlertDialog(
+        onDismissRequest = {},
+        title = { Text(stringResource(R.string.desktop_setup_choice_title)) },
+        text = { Text(stringResource(R.string.desktop_setup_choice_body)) },
+        confirmButton = {
+            TextButton(enabled = !s.offlineBundleImporting, onClick = a.onChooseOnlineSetup) {
+                Text(stringResource(R.string.desktop_setup_online))
+            }
+        },
+        dismissButton = {
+            TextButton(enabled = !s.offlineBundleImporting, onClick = a.onChooseLocalSetup) {
+                Text(if (s.offlineBundleImporting) stringResource(R.string.common_working) else stringResource(R.string.desktop_setup_local))
+            }
+        },
+    )
     val phantomGateVisible = s.showPhantomGate && PhantomProcessLimit.blocksSteam(s.phantomProcessStatus)
     val processSettingsPageVisible = phantomGateVisible || showWirelessAdbFix || showDeveloperDisplayChoice
     val requestDeveloperOptions = {
@@ -525,7 +547,7 @@ private fun FrontEndScreenBody(s: FrontEndState, a: FrontEndActions, page: (@Com
     ) {
         selected = if (selected.startsWith("rom:")) "emu:" + selected.removePrefix("rom:").substringBefore(':') else "desktop"
     }
-    LaunchedEffect(s.isHomeApp) { if (!s.isHomeApp && selected == "android-apps") selected = "steam" }
+    LaunchedEffect(s.isHomeApp) { if (!s.isHomeApp && selected == "android-apps") selected = "desktop" }
     LaunchedEffect(s.steamGames.isEmpty()) {
         if (s.steamGames.isEmpty() && selected.startsWith("app:") && GameRef.parse(selected).appId != null) selected = "games"
     }
@@ -533,7 +555,7 @@ private fun FrontEndScreenBody(s: FrontEndState, a: FrontEndActions, page: (@Com
 
     val railSelection = when {
         Hops.origin != null && s.pageKey == Hops.origin?.page -> Hops.origin!!.dest
-        s.pageKey == "performance" -> "steam"
+        s.pageKey == "performance" -> "setup"
         s.pageKey == "controller-mapping" -> "setup"
         selected.startsWith("app:") -> "games"
         selected.startsWith("emu:") || selected.startsWith("rom:") || selected.startsWith("user:") || selected == "store" -> "desktop"

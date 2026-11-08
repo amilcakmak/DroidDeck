@@ -1548,6 +1548,16 @@
     <string name="drivers_using_quest">Using the bundled Quest display driver and runtime default.</string>
     <string name="drivers_using_quest_restart">Using the bundled Quest display driver and runtime default. The display driver applies after DroidDeck restarts.</string>
     <string name="drivers_not_a_driver">Not a driver zip: neither an AdrenoTools driver, a -Linux Turnip nor an Android + Linux bundle</string>
+    <string name="drivers_driver_incompatible">This Linux driver is incompatible with the detected GPU or Android version.</string>
+    <string name="drivers_mali_gpu_enabled">PanVK selected. The next Linux session will expose the Mali GPU to its experimental driver.</string>
+    <string name="desktop_setup_choice_title">Choose Desktop setup</string>
+    <string name="desktop_setup_choice_body">Online Installation downloads verified Linux and desktop components, then prepares Steam. Local Installation uses a personal offline bundle containing Steam client files you supplied.</string>
+    <string name="desktop_setup_online">Online Installation</string>
+    <string name="desktop_setup_local">Local Installation</string>
+    <string name="offline_bundle_picker_title">Choose your DroidDeck offline bundle</string>
+    <string name="offline_bundle_incomplete">The offline bundle is missing or invalid. Select a verified bundle and try again.</string>
+    <string name="offline_payload_invalid">The offline %1$s payload failed size or checksum validation.</string>
+    <string name="offline_desktop_mismatch">The offline desktop payload does not match this app build.</string>
     <string name="drivers_import_failed">Import failed: %1$s</string>
     <string name="drivers_imported_unnamed">Imported driver</string>
     <string name="drivers_using_bundle">Using %1$s as both the runtime and display driver.</string>
